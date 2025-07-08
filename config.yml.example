@@ -1,0 +1,17 @@
+# Combiner Configuration
+# Seamlessly combine your 4K collection
+
+radarr:
+  main:
+    url: "http://radarr:7878"
+    api_key: "your-main-radarr-api-key"
+  4k:
+    url: "http://radarr4k:7878"  
+    api_key: "your-4k-radarr-api-key"
+
+plex_naming:
+  enabled: true                    # Enable Plex optimization and existing file renaming
+  add_quality_suffix: true         # Add quality suffixes (e.g., "- 1080p", "- 2160p")
+
+logging:
+  level: "INFO"                    # DEBUG, INFO, WARNING, ERROR

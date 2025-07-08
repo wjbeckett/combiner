@@ -1,0 +1,36 @@
+services:
+  combiner:
+    # Use pre-built image from GitHub Container Registry
+    image: ghcr.io/wjbeckett/combiner:latest
+    # Uncomment below to build locally instead:
+    # build: .
+    container_name: combiner
+    restart: unless-stopped
+    ports:
+      - "5465:5465"
+    volumes:
+      # Mount your media directories (adjust paths as needed)
+      - /path/to/your/movies:/movies
+      - /path/to/your/movies-4k:/movies-4k
+      # Mount config file
+      - ./config.yml:/app/config.yml:ro
+    environment:
+      # Optional: Override config with environment variables
+      - RADARR_MAIN_URL=http://radarr:7878
+      - RADARR_MAIN_API_KEY=your-main-radarr-api-key
+      - RADARR_4K_URL=http://radarr4k:7878
+      - RADARR_4K_API_KEY=your-4k-radarr-api-key
+      - ENABLE_PLEX_NAMING=true
+      - PLEX_QUALITY_SUFFIX=true
+    networks:
+      - media
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5465/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  media:
+    external: true  # Assumes you have a media network for your *arr stack
