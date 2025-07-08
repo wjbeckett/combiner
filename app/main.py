@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 import logging
 import os
 import json
+import time
 from datetime import datetime
 from pathlib import Path
 from .radarr_client import RadarrClient
@@ -233,6 +234,17 @@ def process_4k_movie(movie, movie_file):
         logger.info(f"🎬 Processing: {movie_title} ({movie_year})")
         logger.info(f"📁 Source file: {file_path}")
         logger.info(f"🏷️ Radarr Quality: {quality_title}")
+
+        # Wait for Radarr to finish any post-processing (renaming, permissions, etc.)
+        logger.info("⏳ Waiting 10 seconds for Radarr to complete post-processing...")
+        time.sleep(10)
+
+        # Verify file still exists after wait
+        if not Path(file_path).exists():
+            logger.error(f"❌ File no longer exists after wait: {file_path}")
+            return {"success": False, "error": f"File disappeared: {file_path}"}
+
+        logger.info("✅ Post-processing wait complete, proceeding with move...")
 
         # Log naming configuration
         if config.enable_plex_naming and config.plex_quality_suffix:
