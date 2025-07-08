@@ -2,6 +2,8 @@ import os
 import shutil
 import logging
 import re
+import stat
+import time
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 
@@ -187,20 +189,25 @@ class FileManager:
                     "error": "Could not determine root folder mappings",
                 }
 
-            # Create destination directory
-            movie_folder_name = f"{movie_title} ({movie_year})"
-            destination_dir = Path(target_root) / movie_folder_name
+            # Create destination directory using ORIGINAL movie title from file path, not Radarr API
+            # Extract the actual folder name from the source path
+            source_movie_folder = source_file.parent.name
+            logger.info(f"📁 Using original folder name: {source_movie_folder}")
+
+            destination_dir = Path(target_root) / source_movie_folder
             destination_dir.mkdir(parents=True, exist_ok=True)
 
             # Generate filename based on configuration
             if self.config.enable_plex_naming and self.config.plex_quality_suffix:
                 # Map quality to Plex-friendly format
                 plex_quality = self._map_quality_to_plex(quality_title)
+                # Use the original movie folder name for consistency
                 new_filename = (
-                    f"{movie_title} ({movie_year}) - {plex_quality}{source_file.suffix}"
+                    f"{source_movie_folder} - {plex_quality}{source_file.suffix}"
                 )
                 naming_mode = "Plex with quality suffix"
             else:
+                # Keep the original filename exactly as Radarr named it
                 new_filename = source_file.name
                 naming_mode = "Original Radarr naming"
 
@@ -224,16 +231,20 @@ class FileManager:
             existing_files_errors = []
 
             if self.config.enable_plex_naming and self.config.plex_quality_suffix:
+                # Extract title from folder name (remove year part)
+                folder_title = (
+                    source_movie_folder.split(" (")[0]
+                    if " (" in source_movie_folder
+                    else source_movie_folder
+                )
                 renamed, errors = self._rename_existing_files_for_plex(
-                    destination_dir, movie_title, movie_year
+                    destination_dir, folder_title, movie_year
                 )
                 existing_files_renamed = renamed
                 existing_files_errors = errors
 
-            # MOVE the file (not hardlink/symlink)
-            logger.info(f"🚚 Moving file from {source_file} to {destination_path}")
-            shutil.move(str(source_file), str(destination_path))
-            logger.info(f"✅ Successfully moved file to: {destination_path}")
+            # MOVE the file with detailed logging and permission handling
+            move_result = self._move_file_with_logging(source_file, destination_path)
 
             # Clean up empty source directory if it's empty
             source_dir = source_file.parent
@@ -253,12 +264,97 @@ class FileManager:
                 "renamed": source_file.name != destination_path.name,
                 "existing_files_renamed": existing_files_renamed,
                 "existing_files_errors": existing_files_errors,
-                "operation": "moved",
+                "operation": move_result,
             }
 
         except Exception as e:
             logger.error(f"Error moving file to main library: {e}")
             return {"success": False, "error": str(e)}
+
+    def _move_file_with_logging(self, source_file: Path, destination_path: Path) -> str:
+        """Move file with detailed logging and permission handling"""
+        try:
+            start_time = time.time()
+            source_stat = source_file.stat()
+            source_size_mb = source_stat.st_size / (1024 * 1024)
+
+            logger.info(f"🚚 Starting move operation...")
+            logger.info(f"📊 File size: {source_size_mb:.1f} MB")
+            logger.info(f"📁 Source: {source_file}")
+            logger.info(f"📁 Destination: {destination_path}")
+
+            # Check permissions on source file
+            source_perms = oct(source_stat.st_mode)[-3:]
+            logger.info(f"🔒 Source permissions: {source_perms}")
+            logger.info(f"👤 Source owner: {source_stat.st_uid}:{source_stat.st_gid}")
+
+            # Check if source and destination are on same filesystem
+            source_dev = source_stat.st_dev
+            dest_parent = destination_path.parent
+            dest_parent.mkdir(parents=True, exist_ok=True)
+            dest_stat = dest_parent.stat()
+            dest_dev = dest_stat.st_dev
+
+            same_filesystem = source_dev == dest_dev
+            logger.info(f"🔍 Same filesystem: {same_filesystem}")
+            logger.info(f"📊 Source device: {source_dev}, Dest device: {dest_dev}")
+
+            if same_filesystem:
+                logger.info("⚡ Same filesystem detected - should be instant rename!")
+            else:
+                logger.warning("🐌 Cross-filesystem move - will copy data")
+
+            # Try to make source file writable before move (in case it's read-only)
+            try:
+                current_mode = source_file.stat().st_mode
+                source_file.chmod(current_mode | stat.S_IWUSR | stat.S_IWGRP)
+                logger.info("🔓 Made source file writable")
+            except Exception as e:
+                logger.warning(f"Could not modify source permissions: {e}")
+
+            # Perform the move
+            logger.info("🚚 Executing shutil.move()...")
+            shutil.move(str(source_file), str(destination_path))
+
+            end_time = time.time()
+            duration = end_time - start_time
+
+            if same_filesystem and duration > 2.0:
+                logger.warning(
+                    f"⚠️ Move took {duration:.2f}s - unexpectedly slow for same filesystem!"
+                )
+                logger.warning("💡 This might indicate:")
+                logger.warning("   - Docker volume performance issues")
+                logger.warning("   - File system doing unnecessary copying")
+                logger.warning("   - Permission/ownership changes during move")
+            elif same_filesystem:
+                logger.info(
+                    f"⚡ Move completed in {duration:.3f}s - filesystem operation!"
+                )
+            else:
+                speed_mbps = source_size_mb / duration if duration > 0 else 0
+                logger.info(
+                    f"📊 Move completed in {duration:.2f}s ({speed_mbps:.1f} MB/s)"
+                )
+
+            # Check final file permissions
+            final_stat = destination_path.stat()
+            final_perms = oct(final_stat.st_mode)[-3:]
+            logger.info(f"🔒 Final permissions: {final_perms}")
+            logger.info(f"👤 Final owner: {final_stat.st_uid}:{final_stat.st_gid}")
+
+            return "moved"
+
+        except PermissionError as e:
+            logger.error(f"❌ Permission denied during move: {e}")
+            logger.error("💡 Possible solutions:")
+            logger.error("   - Check Docker container user permissions")
+            logger.error("   - Verify volume mount permissions")
+            logger.error("   - Check file/directory ownership")
+            raise
+        except Exception as e:
+            logger.error(f"❌ Move operation failed: {e}")
+            raise
 
     def _find_matching_root_folder(
         self, file_path: str, root_folders: List[Dict]
