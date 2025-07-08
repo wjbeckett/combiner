@@ -1,7 +1,7 @@
 services:
   combiner:
     # Use pre-built image from GitHub Container Registry
-    image: ghcr.io/wjbeckett/combiner:latest
+    image: ghcr.io/yourusername/your-repo-name:latest
     # Uncomment below to build locally instead:
     # build: .
     container_name: combiner
@@ -12,8 +12,8 @@ services:
       # Mount your media directories (adjust paths as needed)
       - /path/to/your/movies:/movies
       - /path/to/your/movies-4k:/movies-4k
-      # Mount config file
-      - ./config.yml:/app/config.yml:ro
+      # Mount config directory (contains config.yml and logs)
+      - /mnt/user/appdata/combiner:/config
     environment:
       # Optional: Override config with environment variables
       - RADARR_MAIN_URL=http://radarr:7878
@@ -30,7 +30,3 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
-
-networks:
-  media:
-    external: true  # Assumes you have a media network for your *arr stack

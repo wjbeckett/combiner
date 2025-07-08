@@ -8,23 +8,26 @@ logger = logging.getLogger(__name__)
 
 class Config:
     def __init__(self):
+        self.config_dir = Path("/config")
         self.load_config()
 
     def load_config(self):
         """Load configuration from environment variables or config file"""
 
         # Try to load from config file first
-        config_file = Path("config.yml")
+        config_file = self.config_dir / "config.yml"
         config_data = {}
 
         if config_file.exists():
             try:
                 with open(config_file, "r") as f:
                     config_data = yaml.safe_load(f)
-                logger.info("Loaded configuration from config.yml")
+                logger.info(f"Loaded configuration from {config_file}")
             except Exception as e:
                 logger.warning(f"Failed to load config file: {e}")
                 config_data = {}
+        else:
+            logger.info(f"Config file not found at {config_file}, using environment variables only")
 
         # Radarr configuration
         radarr_config = config_data.get("radarr", {})
@@ -78,3 +81,12 @@ class Config:
         logger.info(f"Plex naming enabled: {self.enable_plex_naming}")
         if self.enable_plex_naming:
             logger.info(f"Quality suffix enabled: {self.plex_quality_suffix}")
+
+    def get_log_file_path(self) -> Path:
+        """Get path for log file in config directory"""
+        return self.config_dir / "combiner.log"
+
+    def ensure_config_dir(self):
+        """Ensure config directory exists"""
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Config directory ready: {self.config_dir}")

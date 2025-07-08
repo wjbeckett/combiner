@@ -37,22 +37,45 @@ Combiner automatically processes your 4K movie downloads and intelligently combi
 
 ## 🛠️ Quick Setup
 
-### 1. Deploy with Docker
+### 1. Create Config Directory
 
 ```bash
-# Clone/download Combiner
-mkdir combiner && cd combiner
-# Copy all Combiner files here
+# Create config directory on your host
+mkdir -p /mnt/user/appdata/combiner
 
-# Configure
-cp config.yml.example config.yml
-# Edit config.yml with your Radarr URLs and API keys
+# Copy example config
+curl -o /mnt/user/appdata/combiner/config.yml \
+  https://raw.githubusercontent.com/yourusername/combiner/main/config.yml.example
 
-# Deploy
-docker-compose up --build -d
+# Edit with your settings
+nano /mnt/user/appdata/combiner/config.yml
 ```
 
-### 2. Configure 4K Radarr Webhook
+### 2. Deploy with Docker Compose
+
+```yaml
+version: '3.8'
+
+services:
+  combiner:
+    image: ghcr.io/yourusername/combiner:latest
+    container_name: combiner
+    restart: unless-stopped
+    ports:
+      - "5465:5465"
+    volumes:
+      - /path/to/your/movies:/movies
+      - /path/to/your/movies-4k:/movies-4k
+      - /mnt/user/appdata/combiner:/config  # Config & logs
+    networks:
+      - media
+```
+
+```bash
+docker-compose up -d
+```
+
+### 3. Configure 4K Radarr Webhook
 
 In your **4K Radarr instance**:
 
@@ -62,7 +85,7 @@ In your **4K Radarr instance**:
 4. **Test** the connection
 5. **Save**
 
-### 3. Download a 4K Movie
+### 4. Download a 4K Movie
 
 Watch Combiner automatically:
 - ✅ Process the webhook
@@ -73,6 +96,13 @@ Watch Combiner automatically:
 - ✅ Perfect Plex quality selection!
 
 ## ⚙️ Configuration
+
+### Config Directory Structure
+```
+/mnt/user/appdata/combiner/
+├── config.yml          # Main configuration
+└── combiner.log        # Application logs (auto-created)
+```
 
 ### config.yml
 ```yaml
@@ -89,7 +119,7 @@ plex_naming:
   add_quality_suffix: true         # Add quality suffixes for merging
 ```
 
-### Environment Variables
+### Environment Variables (Optional)
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -100,7 +130,7 @@ plex_naming:
 | `ENABLE_PLEX_NAMING` | Enable Plex naming | `false` |
 | `PLEX_QUALITY_SUFFIX` | Add quality suffixes | `false` |
 
-## 🔍 Monitoring
+## 🔍 Monitoring & Debugging
 
 ### Health Check
 ```bash
@@ -116,6 +146,15 @@ curl http://localhost:5465/config
 ```bash
 curl http://localhost:5465/quality-mappings
 ```
+
+### Recent Logs
+```bash
+curl http://localhost:5465/logs
+```
+
+### Log Files
+- **Container logs**: `docker logs combiner`
+- **Application logs**: `/mnt/user/appdata/combiner/combiner.log`
 
 ## 🎯 Key Features
 
@@ -138,6 +177,11 @@ curl http://localhost:5465/quality-mappings
 - Removes processed movies from 4K instance
 - Prevents duplicate tracking
 - Maintains clean library organization
+
+### 📝 Comprehensive Logging
+- File-based logging in config directory
+- Real-time log viewing via API
+- Detailed processing information
 
 ## 📋 Requirements
 
@@ -178,6 +222,7 @@ curl http://localhost:5465/quality-mappings
 - ✅ **Perfect Plex integration** - Quality selection just works
 - ✅ **Optimized storage** - Hardlinks save space
 - ✅ **Library enhancement** - Existing files get optimized too
+- ✅ **Comprehensive logging** - Full visibility into operations
 
 ## 🎬 Deploy Once. Enjoy Forever.
 

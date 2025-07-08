@@ -2,18 +2,28 @@ from flask import Flask, request, jsonify
 import logging
 import os
 from datetime import datetime
+from pathlib import Path
 from .radarr_client import RadarrClient
 from .file_manager import FileManager
 from .config import Config
 
-# Setup logging
+# Initialize config first
+config = Config()
+config.ensure_config_dir()
+
+# Setup logging with file output
+log_file = config.get_log_file_path()
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler(log_file),
+        logging.StreamHandler()  # Also log to console
+    ]
 )
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-config = Config()
 
 # Initialize clients
 radarr_main = RadarrClient(config.radarr_main_url, config.radarr_main_api_key)
@@ -81,6 +91,8 @@ def get_config():
             "quality_suffix_enabled": config.plex_quality_suffix,
             "radarr_main_url": config.radarr_main_url,
             "radarr_4k_url": config.radarr_4k_url,
+            "config_directory": str(config.config_dir),
+            "log_file": str(config.get_log_file_path())
         }
         return jsonify(config_info), 200
     except Exception as e:
@@ -96,6 +108,29 @@ def get_quality_mappings():
         return jsonify(mappings), 200
     except Exception as e:
         logger.error(f"Error getting quality mappings: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
+
+
+@app.route("/logs", methods=["GET"])
+def get_logs():
+    """Get recent log entries"""
+    try:
+        log_file = config.get_log_file_path()
+        if not log_file.exists():
+            return jsonify({"logs": [], "message": "No log file found"}), 200
+        
+        # Get last 100 lines
+        with open(log_file, 'r') as f:
+            lines = f.readlines()
+            recent_lines = lines[-100:] if len(lines) > 100 else lines
+        
+        return jsonify({
+            "logs": [line.strip() for line in recent_lines],
+            "total_lines": len(lines),
+            "showing_lines": len(recent_lines)
+        }), 200
+    except Exception as e:
+        logger.error(f"Error getting logs: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
 
 
@@ -216,6 +251,8 @@ if __name__ == "__main__":
     logger.info("🚀 Starting Combiner...")
 
     # Log configuration
+    logger.info(f"📁 Config directory: {config.config_dir}")
+    logger.info(f"📝 Log file: {config.get_log_file_path()}")
     logger.info(f"⚙️ Plex naming enabled: {config.enable_plex_naming}")
     if config.enable_plex_naming:
         logger.info(f"🏷️ Quality suffix enabled: {config.plex_quality_suffix}")
