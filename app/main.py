@@ -203,7 +203,7 @@ def test_webhook():
 
 
 def process_4k_movie(movie, movie_file):
-    """Process a 4K movie: create hardlink with optional Plex naming and remove from 4K Radarr"""
+    """Process a 4K movie: move file with optional Plex naming and remove from 4K Radarr"""
     try:
         # Safely extract movie information
         movie_title = (
@@ -246,8 +246,8 @@ def process_4k_movie(movie, movie_file):
         main_root_folders = radarr_main.get_root_folders()
         k4_root_folders = radarr_4k.get_root_folders()
 
-        # Create hardlink to main library
-        hardlink_result = file_manager.create_hardlink_to_main_library(
+        # Move file to main library
+        move_result = file_manager.move_to_main_library(
             source_path=file_path,
             movie_title=movie_title,
             movie_year=movie_year,
@@ -256,8 +256,8 @@ def process_4k_movie(movie, movie_file):
             main_root_folders=main_root_folders,
         )
 
-        if not hardlink_result["success"]:
-            return hardlink_result
+        if not move_result["success"]:
+            return move_result
 
         # Remove movie from 4K Radarr (only if we have a valid movie_id)
         if movie_id:
@@ -267,17 +267,18 @@ def process_4k_movie(movie, movie_file):
             removal_result = {"success": False, "error": "No movie ID"}
 
         # Log results
-        existing_renamed = hardlink_result.get("existing_files_renamed", [])
-        existing_errors = hardlink_result.get("existing_files_errors", [])
+        existing_renamed = move_result.get("existing_files_renamed", [])
+        existing_errors = move_result.get("existing_files_errors", [])
 
         if removal_result["success"]:
             logger.info(f"✅ Successfully processed {movie_title} ({movie_year})")
-            logger.info(f"📂 Final filename: {hardlink_result.get('final_filename')}")
-            logger.info(f"🔗 Naming mode: {hardlink_result.get('naming_mode')}")
+            logger.info(f"📂 Final filename: {move_result.get('final_filename')}")
+            logger.info(f"🔗 Naming mode: {move_result.get('naming_mode')}")
+            logger.info(f"🚚 Operation: {move_result.get('operation')}")
 
-            if hardlink_result.get("renamed"):
+            if move_result.get("renamed"):
                 logger.info(
-                    f"🏷️ Renamed new file: {hardlink_result.get('original_filename')} → {hardlink_result.get('final_filename')}"
+                    f"🏷️ Renamed file: {move_result.get('original_filename')} → {move_result.get('final_filename')}"
                 )
 
             if existing_renamed:
@@ -297,18 +298,19 @@ def process_4k_movie(movie, movie_file):
             return {
                 "success": True,
                 "movie": f"{movie_title} ({movie_year})",
-                "hardlink_path": hardlink_result.get("destination_path"),
-                "final_filename": hardlink_result.get("final_filename"),
-                "original_filename": hardlink_result.get("original_filename"),
-                "naming_mode": hardlink_result.get("naming_mode"),
-                "renamed": hardlink_result.get("renamed"),
+                "destination_path": move_result.get("destination_path"),
+                "final_filename": move_result.get("final_filename"),
+                "original_filename": move_result.get("original_filename"),
+                "naming_mode": move_result.get("naming_mode"),
+                "renamed": move_result.get("renamed"),
+                "operation": move_result.get("operation"),
                 "existing_files_renamed": existing_renamed,
                 "existing_files_errors": existing_errors,
                 "removed_from_4k_radarr": True,
             }
         else:
             logger.warning(
-                f"⚠️ Hardlink created but failed to remove from 4K Radarr: {removal_result.get('error')}"
+                f"⚠️ File moved but failed to remove from 4K Radarr: {removal_result.get('error')}"
             )
 
             # Still log existing file renames even if Radarr removal failed
@@ -320,9 +322,10 @@ def process_4k_movie(movie, movie_file):
             return {
                 "success": True,  # Partial success
                 "movie": f"{movie_title} ({movie_year})",
-                "hardlink_path": hardlink_result.get("destination_path"),
-                "final_filename": hardlink_result.get("final_filename"),
-                "naming_mode": hardlink_result.get("naming_mode"),
+                "destination_path": move_result.get("destination_path"),
+                "final_filename": move_result.get("final_filename"),
+                "naming_mode": move_result.get("naming_mode"),
+                "operation": move_result.get("operation"),
                 "existing_files_renamed": existing_renamed,
                 "existing_files_errors": existing_errors,
                 "removed_from_4k_radarr": False,
@@ -367,5 +370,5 @@ if __name__ == "__main__":
         f"🎬 Supporting {len(mappings_info['supported_video_extensions'])} video formats"
     )
 
-    logger.info("🎬 Combiner ready to seamlessly combine your 4K collection!")
+    logger.info("🎬 Combiner ready to seamlessly move your 4K collection!")
     app.run(host="0.0.0.0", port=5465, debug=False)
