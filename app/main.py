@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify
 import logging
 import os
+import json
 from datetime import datetime
 from pathlib import Path
 from .radarr_client import RadarrClient
@@ -18,8 +19,8 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[
         logging.FileHandler(log_file),
-        logging.StreamHandler()  # Also log to console
-    ]
+        logging.StreamHandler(),  # Also log to console
+    ],
 )
 logger = logging.getLogger(__name__)
 
@@ -47,22 +48,52 @@ def handle_radarr_4k_webhook():
             logger.error("No JSON payload received")
             return jsonify({"error": "No JSON payload"}), 400
 
-        # Log the webhook event
+        # Log the webhook event and full payload for debugging
         event_type = payload.get("eventType", "unknown")
         logger.info(f"Received webhook: {event_type}")
+
+        # Debug: Log the full payload structure (be careful with sensitive data)
+        logger.debug(f"Full webhook payload: {json.dumps(payload, indent=2)}")
+
+        # Log payload keys to understand structure
+        logger.info(f"Payload keys: {list(payload.keys())}")
 
         # Only process 'Download' events (when import completes)
         if event_type != "Download":
             logger.info(f"Ignoring event type: {event_type}")
             return jsonify({"message": "Event ignored"}), 200
 
-        # Extract movie and file information
-        movie = payload.get("movie", {})
-        movie_file = payload.get("movieFile", {})
+        # Extract movie and file information with better error handling
+        movie = payload.get("movie")
+        movie_file = payload.get("movieFile")
 
-        if not movie or not movie_file:
-            logger.error("Missing movie or movieFile data in payload")
-            return jsonify({"error": "Invalid payload structure"}), 400
+        # Debug logging for movie and movieFile
+        if movie:
+            logger.info(f"Movie data type: {type(movie)}")
+            if isinstance(movie, dict):
+                logger.info(f"Movie keys: {list(movie.keys())}")
+            else:
+                logger.warning(f"Movie is not a dict, it's: {movie}")
+        else:
+            logger.error("No 'movie' key in payload")
+
+        if movie_file:
+            logger.info(f"MovieFile data type: {type(movie_file)}")
+            if isinstance(movie_file, dict):
+                logger.info(f"MovieFile keys: {list(movie_file.keys())}")
+            else:
+                logger.warning(f"MovieFile is not a dict, it's: {movie_file}")
+        else:
+            logger.error("No 'movieFile' key in payload")
+
+        # Validate that we have the required data structures
+        if not movie or not isinstance(movie, dict):
+            logger.error("Missing or invalid movie data in payload")
+            return jsonify({"error": "Invalid movie data structure"}), 400
+
+        if not movie_file or not isinstance(movie_file, dict):
+            logger.error("Missing or invalid movieFile data in payload")
+            return jsonify({"error": "Invalid movieFile data structure"}), 400
 
         # Process the 4K movie
         result = process_4k_movie(movie, movie_file)
@@ -79,7 +110,11 @@ def handle_radarr_4k_webhook():
 
     except Exception as e:
         logger.error(f"Error processing webhook: {str(e)}")
-        return jsonify({"error": "Internal server error"}), 500
+        logger.error(f"Exception type: {type(e)}")
+        import traceback
+
+        logger.error(f"Full traceback: {traceback.format_exc()}")
+        return jsonify({"error": "Internal server error", "details": str(e)}), 500
 
 
 @app.route("/config", methods=["GET"])
@@ -92,7 +127,7 @@ def get_config():
             "radarr_main_url": config.radarr_main_url,
             "radarr_4k_url": config.radarr_4k_url,
             "config_directory": str(config.config_dir),
-            "log_file": str(config.get_log_file_path())
+            "log_file": str(config.get_log_file_path()),
         }
         return jsonify(config_info), 200
     except Exception as e:
@@ -118,33 +153,82 @@ def get_logs():
         log_file = config.get_log_file_path()
         if not log_file.exists():
             return jsonify({"logs": [], "message": "No log file found"}), 200
-        
+
         # Get last 100 lines
-        with open(log_file, 'r') as f:
+        with open(log_file, "r") as f:
             lines = f.readlines()
             recent_lines = lines[-100:] if len(lines) > 100 else lines
-        
-        return jsonify({
-            "logs": [line.strip() for line in recent_lines],
-            "total_lines": len(lines),
-            "showing_lines": len(recent_lines)
-        }), 200
+
+        return (
+            jsonify(
+                {
+                    "logs": [line.strip() for line in recent_lines],
+                    "total_lines": len(lines),
+                    "showing_lines": len(recent_lines),
+                }
+            ),
+            200,
+        )
     except Exception as e:
         logger.error(f"Error getting logs: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
 
 
+@app.route("/test-webhook", methods=["POST"])
+def test_webhook():
+    """Test endpoint to debug webhook payloads"""
+    try:
+        payload = request.get_json()
+        logger.info("=== TEST WEBHOOK RECEIVED ===")
+        logger.info(f"Payload type: {type(payload)}")
+        logger.info(f"Payload: {json.dumps(payload, indent=2)}")
+
+        if isinstance(payload, dict):
+            logger.info(f"Keys: {list(payload.keys())}")
+
+        return (
+            jsonify(
+                {
+                    "message": "Test webhook received",
+                    "payload_type": str(type(payload)),
+                    "payload": payload,
+                }
+            ),
+            200,
+        )
+
+    except Exception as e:
+        logger.error(f"Error in test webhook: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
 def process_4k_movie(movie, movie_file):
     """Process a 4K movie: create hardlink with optional Plex naming and remove from 4K Radarr"""
     try:
-        movie_title = movie.get("title", "Unknown")
-        movie_year = movie.get("year", "Unknown")
-        movie_id = movie.get("id")
-        file_path = movie_file.get("path")
+        # Safely extract movie information
+        movie_title = (
+            movie.get("title", "Unknown") if isinstance(movie, dict) else "Unknown"
+        )
+        movie_year = (
+            movie.get("year", "Unknown") if isinstance(movie, dict) else "Unknown"
+        )
+        movie_id = movie.get("id") if isinstance(movie, dict) else None
+
+        # Safely extract file information
+        file_path = movie_file.get("path") if isinstance(movie_file, dict) else None
+
+        if not file_path:
+            logger.error("No file path found in movieFile data")
+            return {"success": False, "error": "No file path in movieFile"}
 
         # Extract quality information from the webhook payload
-        quality_info = movie_file.get("quality", {})
-        quality_title = quality_info.get("quality", {}).get("name", "Unknown")
+        quality_info = (
+            movie_file.get("quality", {}) if isinstance(movie_file, dict) else {}
+        )
+        if isinstance(quality_info, dict):
+            quality_title = quality_info.get("quality", {}).get("name", "Unknown")
+        else:
+            quality_title = "Unknown"
 
         logger.info(f"🎬 Processing: {movie_title} ({movie_year})")
         logger.info(f"📁 Source file: {file_path}")
@@ -175,8 +259,12 @@ def process_4k_movie(movie, movie_file):
         if not hardlink_result["success"]:
             return hardlink_result
 
-        # Remove movie from 4K Radarr
-        removal_result = radarr_4k.remove_movie(movie_id)
+        # Remove movie from 4K Radarr (only if we have a valid movie_id)
+        if movie_id:
+            removal_result = radarr_4k.remove_movie(movie_id)
+        else:
+            logger.warning("No movie ID found, skipping removal from 4K Radarr")
+            removal_result = {"success": False, "error": "No movie ID"}
 
         # Log results
         existing_renamed = hardlink_result.get("existing_files_renamed", [])
@@ -243,6 +331,9 @@ def process_4k_movie(movie, movie_file):
 
     except Exception as e:
         logger.error(f"❌ Error processing 4K movie: {str(e)}")
+        import traceback
+
+        logger.error(f"Full traceback: {traceback.format_exc()}")
         return {"success": False, "error": str(e)}
 
 
