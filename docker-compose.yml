@@ -1,29 +1,17 @@
 services:
   combiner:
-    # Use pre-built image from GitHub Container Registry
-    image: ghcr.io/yourusername/your-repo-name:latest
-    # Uncomment below to build locally instead:
-    # build: .
+    image: ghcr.io/wjbeckett/combiner:latest
     container_name: combiner
     restart: unless-stopped
     ports:
       - "5465:5465"
     volumes:
-      # Mount your media directories (adjust paths as needed)
-      - /path/to/your/movies:/movies
-      - /path/to/your/movies-4k:/movies-4k
-      # Mount config directory (contains config.yml and logs)
+      - /mnt/user/data:/data
       - /mnt/user/appdata/combiner:/config
     environment:
-      # Optional: Override config with environment variables
-      - RADARR_MAIN_URL=http://radarr:7878
-      - RADARR_MAIN_API_KEY=your-main-radarr-api-key
-      - RADARR_4K_URL=http://radarr4k:7878
-      - RADARR_4K_API_KEY=your-4k-radarr-api-key
-      - ENABLE_PLEX_NAMING=true
-      - PLEX_QUALITY_SUFFIX=true
-    networks:
-      - media
+      - PUID=99
+      - PGID=100
+      - UMASK=022
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5465/health"]
       interval: 30s
