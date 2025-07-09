@@ -147,6 +147,57 @@ def get_quality_mappings():
         return jsonify({"error": "Internal server error"}), 500
 
 
+@app.route("/exclusions", methods=["GET"])
+def get_exclusions():
+    """Get current import list exclusions from 4K Radarr"""
+    try:
+        exclusions = radarr_4k.get_import_list_exclusions()
+        return (
+            jsonify(
+                {
+                    "exclusions": exclusions,
+                    "total_count": len(exclusions),
+                    "message": f"Found {len(exclusions)} import list exclusions",
+                }
+            ),
+            200,
+        )
+    except Exception as e:
+        logger.error(f"Error getting exclusions: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
+
+
+@app.route("/exclusions/<int:tmdb_id>", methods=["POST"])
+def add_exclusion(tmdb_id):
+    """Manually add a movie to import list exclusions"""
+    try:
+        data = request.get_json() or {}
+        title = data.get("title", f"Movie {tmdb_id}")
+
+        result = radarr_4k.add_import_list_exclusion(tmdb_id, title)
+
+        if result["success"]:
+            return (
+                jsonify(
+                    {
+                        "message": f"Added exclusion for {title}",
+                        "tmdb_id": tmdb_id,
+                        "title": title,
+                    }
+                ),
+                200,
+            )
+        else:
+            return (
+                jsonify({"error": result.get("error", "Failed to add exclusion")}),
+                500,
+            )
+
+    except Exception as e:
+        logger.error(f"Error adding exclusion: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
+
+
 @app.route("/logs", methods=["GET"])
 def get_logs():
     """Get recent log entries"""
@@ -204,7 +255,7 @@ def test_webhook():
 
 
 def process_4k_movie(movie, movie_file):
-    """Process a 4K movie: move file with optional Plex naming and remove from 4K Radarr"""
+    """Process a 4K movie: move file with optional Plex naming and remove from 4K Radarr with exclusion"""
     try:
         # Safely extract movie information
         movie_title = (
@@ -271,14 +322,21 @@ def process_4k_movie(movie, movie_file):
         if not move_result["success"]:
             return move_result
 
-        # Remove movie from 4K Radarr (only if we have a valid movie_id)
+        # Remove movie from 4K Radarr with import list exclusion (only if we have a valid movie_id)
         if movie_id:
-            removal_result = radarr_4k.remove_movie(movie_id)
+            logger.info(
+                "🚫 Removing movie from 4K Radarr with import list exclusion..."
+            )
+            removal_result = radarr_4k.remove_movie(
+                movie_id,
+                add_exclusion=True,  # This prevents re-importing!
+                delete_files=False,  # We already moved the file
+            )
         else:
             logger.warning("No movie ID found, skipping removal from 4K Radarr")
             removal_result = {"success": False, "error": "No movie ID"}
 
-        # Log results
+        # Log results with exclusion details
         existing_renamed = move_result.get("existing_files_renamed", [])
         existing_errors = move_result.get("existing_files_errors", [])
 
@@ -292,6 +350,19 @@ def process_4k_movie(movie, movie_file):
                 logger.info(
                     f"🏷️ Renamed file: {move_result.get('original_filename')} → {move_result.get('final_filename')}"
                 )
+
+            # Log exclusion status
+            if removal_result.get("exclusion_added"):
+                if removal_result.get("exclusion_verified"):
+                    logger.info(
+                        f"🚫 ✅ Import list exclusion confirmed - movie won't be re-imported!"
+                    )
+                else:
+                    logger.warning(
+                        f"🚫 ⚠️ Import list exclusion may not have worked - check manually"
+                    )
+            else:
+                logger.info(f"📝 Movie removed without import exclusion")
 
             if existing_renamed:
                 logger.info(
@@ -319,11 +390,17 @@ def process_4k_movie(movie, movie_file):
                 "existing_files_renamed": existing_renamed,
                 "existing_files_errors": existing_errors,
                 "removed_from_4k_radarr": True,
+                "import_exclusion_added": removal_result.get("exclusion_added", False),
+                "import_exclusion_verified": removal_result.get(
+                    "exclusion_verified", False
+                ),
+                "tmdb_id": removal_result.get("tmdb_id"),
             }
         else:
             logger.warning(
                 f"⚠️ File moved but failed to remove from 4K Radarr: {removal_result.get('error')}"
             )
+            logger.warning(f"💡 Movie may be re-imported on next sync!")
 
             # Still log existing file renames even if Radarr removal failed
             if existing_renamed:
@@ -341,6 +418,7 @@ def process_4k_movie(movie, movie_file):
                 "existing_files_renamed": existing_renamed,
                 "existing_files_errors": existing_errors,
                 "removed_from_4k_radarr": False,
+                "import_exclusion_added": False,
                 "warning": removal_result.get("error"),
             }
 
@@ -382,5 +460,13 @@ if __name__ == "__main__":
         f"🎬 Supporting {len(mappings_info['supported_video_extensions'])} video formats"
     )
 
+    # Log exclusion info
+    try:
+        exclusions = radarr_4k.get_import_list_exclusions()
+        logger.info(f"🚫 Found {len(exclusions)} existing import list exclusions")
+    except Exception as e:
+        logger.warning(f"Could not check import list exclusions: {e}")
+
     logger.info("🎬 Combiner ready to seamlessly move your 4K collection!")
+    logger.info("🚫 Import list exclusions will prevent circular re-importing!")
     app.run(host="0.0.0.0", port=5465, debug=False)
