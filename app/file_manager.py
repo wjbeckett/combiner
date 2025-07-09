@@ -201,11 +201,27 @@ class FileManager:
             if self.config.enable_plex_naming and self.config.plex_quality_suffix:
                 # Map quality to Plex-friendly format
                 plex_quality = self._map_quality_to_plex(quality_title)
-                # Use the original movie folder name for consistency
-                new_filename = (
-                    f"{source_movie_folder} - {plex_quality}{source_file.suffix}"
-                )
-                naming_mode = "Plex with quality suffix"
+
+                # APPEND quality suffix to original filename (preserve everything)
+                original_stem = source_file.stem  # filename without extension
+                original_extension = source_file.suffix
+
+                # Check if quality suffix already exists to avoid duplicates
+                if self._has_quality_suffix(original_stem):
+                    logger.info(
+                        f"File already has quality suffix, keeping as-is: {source_file.name}"
+                    )
+                    new_filename = source_file.name
+                else:
+                    # Append the Plex quality to the original filename
+                    new_filename = (
+                        f"{original_stem} - {plex_quality}{original_extension}"
+                    )
+                    logger.info(
+                        f"🏷️ Appending quality: {source_file.name} → {new_filename}"
+                    )
+
+                naming_mode = "Plex with quality suffix (appended)"
             else:
                 # Keep the original filename exactly as Radarr named it
                 new_filename = source_file.name
@@ -237,7 +253,7 @@ class FileManager:
                     if " (" in source_movie_folder
                     else source_movie_folder
                 )
-                renamed, errors = self._rename_existing_files_for_plex(
+                renamed, errors = self._rename_existing_files_for_plex_append(
                     destination_dir, folder_title, movie_year
                 )
                 existing_files_renamed = renamed
@@ -400,10 +416,10 @@ class FileManager:
         logger.info(f"Quality mapping: '{radarr_quality}' → '{cleaned}'")
         return cleaned or "1080p"
 
-    def _rename_existing_files_for_plex(
+    def _rename_existing_files_for_plex_append(
         self, directory: Path, movie_title: str, movie_year: int
     ) -> Tuple[List[Tuple[str, str]], List[str]]:
-        """Rename existing movie files to include quality suffix for Plex merging"""
+        """Rename existing movie files to APPEND quality suffix for Plex merging"""
         renamed_files = []
         errors = []
 
@@ -416,9 +432,12 @@ class FileManager:
                 and file_path.suffix.lower() in self.video_extensions
             ):
                 try:
-                    if self._has_quality_suffix(file_path.name):
+                    original_name = file_path.name
+
+                    # Check if file already has a quality suffix
+                    if self._has_quality_suffix(file_path.stem):
                         logger.info(
-                            f"File already has quality suffix, skipping: {file_path.name}"
+                            f"File already has quality suffix, skipping: {original_name}"
                         )
                         continue
 
@@ -427,8 +446,12 @@ class FileManager:
                         file_path.name
                     )
 
-                    # Generate new filename with quality suffix
-                    new_name = f"{movie_title} ({movie_year}) - {detected_quality}{file_path.suffix}"
+                    # APPEND quality suffix to existing filename (preserve everything)
+                    original_stem = file_path.stem
+                    original_extension = file_path.suffix
+                    new_name = (
+                        f"{original_stem} - {detected_quality}{original_extension}"
+                    )
                     new_path = file_path.parent / new_name
 
                     if new_path.exists():
@@ -438,8 +461,10 @@ class FileManager:
                         continue
 
                     file_path.rename(new_path)
-                    renamed_files.append((file_path.name, new_name))
-                    logger.info(f"Renamed for Plex: {file_path.name} → {new_name}")
+                    renamed_files.append((original_name, new_name))
+                    logger.info(
+                        f"Renamed for Plex (appended): {original_name} → {new_name}"
+                    )
 
                 except Exception as e:
                     error_msg = f"Failed to rename {file_path.name}: {str(e)}"
@@ -448,11 +473,11 @@ class FileManager:
 
         return renamed_files, errors
 
-    def _has_quality_suffix(self, filename: str) -> bool:
-        """Check if filename already has a quality suffix"""
-        # Pattern matches: " - 1080p", " - 720p", " - 2160p", etc.
-        pattern = r" - \d{3,4}p(?:\.|$)"
-        return bool(re.search(pattern, filename))
+    def _has_quality_suffix(self, filename_stem: str) -> bool:
+        """Check if filename already has a quality suffix at the end"""
+        # Pattern matches: " - 1080p", " - 720p", " - 2160p", etc. at the END
+        pattern = r" - \d{3,4}p$"
+        return bool(re.search(pattern, filename_stem))
 
     def _detect_quality_from_filename(self, filename: str) -> str:
         """Detect quality from existing filename"""
