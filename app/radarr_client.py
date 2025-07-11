@@ -113,9 +113,20 @@ class RadarrClient:
     def verify_exclusion_added(self, tmdb_id: int) -> bool:
         """Verify that a movie was added to import list exclusions"""
         try:
-            response = self.session.get(f"{self.base_url}/api/v3/importlistexclusion")
+            # Use the correct API endpoint for exclusions
+            response = self.session.get(
+                f"{self.base_url}/api/v3/exclusions/paged",
+                params={"page": 1, "pageSize": 1000},
+            )
             response.raise_for_status()
-            exclusions = response.json()
+            exclusions_data = response.json()
+
+            # Handle paged response format
+            exclusions = (
+                exclusions_data.get("records", [])
+                if isinstance(exclusions_data, dict)
+                else exclusions_data
+            )
 
             # Check if our TMDB ID is in the exclusions
             for exclusion in exclusions:
@@ -130,34 +141,108 @@ class RadarrClient:
 
         except Exception as e:
             logger.warning(f"Could not verify exclusion for TMDB ID {tmdb_id}: {e}")
-            return False
+            # Fallback to deprecated endpoint if paged fails
+            try:
+                response = self.session.get(f"{self.base_url}/api/v3/exclusions")
+                response.raise_for_status()
+                exclusions = response.json()
+
+                for exclusion in exclusions:
+                    if exclusion.get("tmdbId") == tmdb_id:
+                        logger.debug(f"Found exclusion for TMDB {tmdb_id} (fallback)")
+                        return True
+                return False
+            except Exception as fallback_e:
+                logger.warning(f"Fallback exclusion check also failed: {fallback_e}")
+                return False
 
     def get_import_list_exclusions(self) -> List[Dict]:
         """Get all import list exclusions"""
         try:
-            response = self.session.get(f"{self.base_url}/api/v3/importlistexclusion")
+            # Try the preferred paged endpoint first
+            response = self.session.get(
+                f"{self.base_url}/api/v3/exclusions/paged",
+                params={"page": 1, "pageSize": 1000},
+            )
             response.raise_for_status()
-            exclusions = response.json()
+            exclusions_data = response.json()
+
+            # Handle paged response format
+            if isinstance(exclusions_data, dict) and "records" in exclusions_data:
+                exclusions = exclusions_data["records"]
+            else:
+                exclusions = exclusions_data
+
             logger.info(f"📋 Found {len(exclusions)} import list exclusions")
             return exclusions
-        except Exception as e:
-            logger.error(f"Failed to get import list exclusions: {e}")
-            return []
 
-    def add_import_list_exclusion(self, tmdb_id: int, title: str) -> Dict:
+        except Exception as e:
+            logger.warning(f"Paged exclusions endpoint failed: {e}")
+            # Fallback to deprecated endpoint
+            try:
+                response = self.session.get(f"{self.base_url}/api/v3/exclusions")
+                response.raise_for_status()
+                exclusions = response.json()
+                logger.info(
+                    f"📋 Found {len(exclusions)} import list exclusions (fallback)"
+                )
+                return exclusions
+            except Exception as fallback_e:
+                logger.error(f"Failed to get import list exclusions: {fallback_e}")
+                return []
+
+    def add_import_list_exclusion(
+        self, tmdb_id: int, title: str, year: int = None
+    ) -> Dict:
         """Manually add a movie to import list exclusions"""
         try:
+            # Check if exclusion already exists
+            existing_exclusions = self.get_import_list_exclusions()
+            for exclusion in existing_exclusions:
+                if exclusion.get("tmdbId") == tmdb_id:
+                    logger.info(
+                        f"Movie '{title}' (TMDB: {tmdb_id}) is already in exclusion list"
+                    )
+                    return {
+                        "success": True,
+                        "tmdb_id": tmdb_id,
+                        "title": title,
+                        "already_exists": True,
+                    }
+
+            # Create exclusion data
             data = {"tmdbId": tmdb_id, "movieTitle": title}
 
+            # Add year if provided
+            if year:
+                data["movieYear"] = year
+
             response = self.session.post(
-                f"{self.base_url}/api/v3/importlistexclusion", json=data
+                f"{self.base_url}/api/v3/exclusions", json=data
             )
             response.raise_for_status()
 
             logger.info(
                 f"✅ Manually added import list exclusion for '{title}' (TMDB: {tmdb_id})"
             )
-            return {"success": True, "tmdb_id": tmdb_id, "title": title}
+
+            # Verify the exclusion was added
+            if self.verify_exclusion_added(tmdb_id):
+                logger.info(f"🔒 Exclusion verified for '{title}'")
+                return {
+                    "success": True,
+                    "tmdb_id": tmdb_id,
+                    "title": title,
+                    "verified": True,
+                }
+            else:
+                logger.warning(f"⚠️ Could not verify exclusion for '{title}'")
+                return {
+                    "success": True,
+                    "tmdb_id": tmdb_id,
+                    "title": title,
+                    "verified": False,
+                }
 
         except Exception as e:
             logger.error(f"Failed to add import list exclusion for TMDB {tmdb_id}: {e}")
@@ -167,7 +252,7 @@ class RadarrClient:
         """Remove a movie from import list exclusions"""
         try:
             response = self.session.delete(
-                f"{self.base_url}/api/v3/importlistexclusion/{exclusion_id}"
+                f"{self.base_url}/api/v3/exclusions/{exclusion_id}"
             )
             response.raise_for_status()
 
