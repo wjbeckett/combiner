@@ -64,8 +64,7 @@ services:
     ports:
       - "5465:5465"
     volumes:
-      - /path/to/your/movies:/movies
-      - /path/to/your/movies-4k:/movies-4k
+      - /mnt/user/data:/data # Same data mount as your Radarr and Radarr-4k
       - /mnt/user/appdata/combiner:/config  # Config & logs
     networks:
       - media
